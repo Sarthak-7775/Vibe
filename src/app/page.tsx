@@ -3,6 +3,8 @@
 import { Button } from "@/components/ui/button"
 import { useTRPC } from "@/trpc/client"
 import { Mutation, useMutation } from "@tanstack/react-query";
+import { Input } from "@/components/ui/input";
+import { useState } from "react";
 
 // import { Suspense } from "react";
 // import { dehydrate, HydrationBoundary, queryOptions } from "@tanstack/react-query";
@@ -23,12 +25,15 @@ import { Mutation, useMutation } from "@tanstack/react-query";
 // };
 
 const Page = () => {
+  const [value, setValue] = useState("");
+
   const trpc = useTRPC();
   const invoke = useMutation(trpc.invoke.mutationOptions({}));
 
   return (
-    <div className="h-screen bg-black">
-      <Button onClick={() => invoke.mutate({ text: "Sarthak" })}>
+    <div className="h-screen bg-emerald-400 flex items-center justify-center">
+      <Input value={value} onChange={(e) => setValue(e.target.value)} className="w-1/2" />
+      <Button className="bg-brown text-black" onClick={() => invoke.mutate({ value: value })}>
         Invoke Background Job
       </Button>
     </div>
