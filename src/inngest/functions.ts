@@ -39,9 +39,15 @@ export const processTask = inngest.createFunction(
                     name: "terminal",
                     description: "Use the terminal to run commands",
                     parameters: z.object({
-                        command: z.string(),
+                        command: z
+                            .string()
+                            .regex(/^npm install [\w./@-]+(?:\s+--yes)?$/, "Only npm install <package> --yes is allowed"),
                     }),
                     handler: async ({ command }, { step }) => {
+                        if (!/^npm install [\w./@-]+(?:\s+--yes)?$/.test(command)) {
+                            throw new Error("Unsupported terminal command");
+                        }
+
                         return await step?.run("terminal", async () => {
                             const buffers = { stdout: "", stderr: "" };
 
@@ -85,6 +91,16 @@ export const processTask = inngest.createFunction(
                                 const updatedFiles = network.state.data.files || {};
                                 const sandbox = await getSandbox(sandboxId);
                                 for (const file of files) {
+                                    if (
+                                        file.path.startsWith("/") ||
+                                        file.path.includes("..") ||
+                                        file.path === "app/layout.tsx" ||
+                                        file.path === "package.json" ||
+                                        /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(file.path)
+                                    ) {
+                                        throw new Error(`Disallowed file path: ${file.path}`);
+                                    }
+
                                     await sandbox.files.write(file.path, file.content);
                                     updatedFiles[file.path] = file.content;
                                 }
