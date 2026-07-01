@@ -1,39 +1,39 @@
 // src/inngest/functions.ts
 import { z } from 'zod';
 import { inngest } from "./client";
-import { createAgent, gemini, openai, grok, createTool, createNetwork } from '@inngest/agent-kit';
+import { createAgent, gemini, openai, grok, createTool, createNetwork, type Tool } from '@inngest/agent-kit';
 import { Sandbox } from "e2b";
 import { getSandbox, lastAssistantTextMessageContent } from "./utils";
 import { PROMPT } from "@/prompt";
+import prisma from "@/lib/db";
 
-export const processTask = inngest.createFunction(
-    { id: "process-task", triggers: { event: "app/task.created" } },
+
+interface AgentState {
+    summary: string;
+    files: { [path: string]: string };
+};
+
+export const codeAgentFunction = inngest.createFunction(
+    { id: "code-agent", triggers: { event: "code-agent/run" } },
     async ({ event, step }) => {
-        // const result = await step.run("handle-task", async () => {
-        //     return { processed: true, id: event.data.value };
-        // });
-
-        // await step.sleep("handle-task", "10s");
-
-        // return { message: `Task ${event.data.value} complete`, result };
 
         const sandboxId = await step.run("get-sandbox-id", async () => {
             const sandbox = await Sandbox.create("sarthaks-default-team-c318/vibe-nextjs-sarthak-dev");
             return sandbox.sandboxId;
         });
 
-        const agent = createAgent({
+        const codeAgent = createAgent<AgentState>({
             name: 'Code writer',
             system: PROMPT,
-            // model: openai({
-            //     model: "llama-3.3-70b-versatile",
-            //     apiKey: process.env.XAI_API_KEY, // since your gsk_ key is here
-            //     baseUrl: "https://api.groq.com/openai/v1",
-            // }),
-            model: gemini({
-                model: "gemini-1.5-pro",
-                apiKey: process.env.GEMINI_API_KEY,
+            model: openai({
+                model: "llama-3.3-70b-versatile",
+                apiKey: process.env.XAI_API_KEY, // since your gsk_ key is here
+                baseUrl: "https://api.groq.com/openai/v1",
             }),
+            // model: gemini({
+            //     model: "gemini-1.5-pro",
+            //     apiKey: process.env.GEMINI_API_KEY,
+            // }),
             tools: [
                 createTool({
                     name: "terminal",
@@ -84,7 +84,7 @@ export const processTask = inngest.createFunction(
                     }),
                     handler: async (
                         { files },
-                        { step, network }
+                        { step, network }: Tool.Options<AgentState>
                     ) => {
                         const newFiles = await step?.run("createOrUpdateFiles", async () => {
                             try {
@@ -155,9 +155,9 @@ export const processTask = inngest.createFunction(
             },
         });
 
-        const network = createNetwork({
+        const network = createNetwork<AgentState>({
             name: "coding-agent-network",
-            agents: [agent],
+            agents: [codeAgent],
             maxIter: 15,
             router: async ({ network }) => {
                 const summary = network.state.data.summary;
@@ -166,23 +166,54 @@ export const processTask = inngest.createFunction(
                     return;
                 }
 
-                return agent;
+                return codeAgent;
             },
         });
 
-        const resultFinal = await network.run(event.data.value);
+        const result = await network.run(event.data.value);
 
-
-        // const { output } = await agent.run(
-        //     `Write the following snippet: ${event.data.value}`,
-        // );
+        const isError =
+            !result.state.data.summary ||
+            Object.keys(result.state.data.files || {}).length === 0;
 
         const sandboxUrl = await step.run("get-sandbox-url", async () => {
             const sandbox = await getSandbox(sandboxId);
             await sandbox.commands.run("npm run dev", { background: true });
             const host = sandbox.getHost(3000);
             return `https://${host}`;
-        })
+        });
+
+        await step.run("save-result", async () => {
+            if (isError) {
+                return await prisma.message.create({
+                    data: {
+                        projectId: event.data.projectId,
+                        content: "Something went wrong. Please try again.",
+                        role: "ASSISTANT",
+                        type: "ERROR",
+                    },
+                });
+            }
+
+            return await prisma.message.create({
+                data: {
+                    projectId: event.data.projectId,
+                    content: result.state.data.summary,
+                    role: "ASSISTANT",
+                    type: "RESULT",
+                    fragment: {
+                        create: {
+                            sandboxUrl: sandboxUrl,
+                            title: "Fragment",
+                            files: result.state.data.files,
+                        },
+                    },
+                },
+            })
+        });
+
+
+
 
         // return { output, sandboxUrl };
         // return { sandboxUrl }
@@ -190,8 +221,8 @@ export const processTask = inngest.createFunction(
         return {
             url: sandboxUrl,
             title: "Fragment",
-            files: resultFinal.state.data.files,
-            summary: resultFinal.state.data.summary,
+            files: result.state.data.files,
+            summary: result.state.data.summary,
         };
     }
 );
