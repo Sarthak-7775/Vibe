@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { Fragment } from "@/generated/prisma";
+import { Fragment } from "@/generated/prisma/client";
 import { useTRPC } from "@/trpc/client";
 
 import { MessageCard } from "./message-card";
